@@ -5,3 +5,8 @@
 #include <windows.h>
 #include <assert.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
+#include <type_traits>
+#include <utility>
