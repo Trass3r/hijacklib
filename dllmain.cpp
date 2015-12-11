@@ -1,40 +1,95 @@
 #include "stdafx.h"
+#include "hookfunction.h"
 
-#include <windows.h>
-#include <assert.h>
+static DWORD WINAPI
+MyGetVersion()
+{
+	return 0x0A28 << 16 | 0x0105; // XP, 5.1
+}
 
-extern int myhookfoo(int a);
+constexpr auto OrgWndProc = (int (WINAPI *)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)) 0x005AF590;
+constexpr auto OrgWndProcWindowed = (int (WINAPI *)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)) 0x00552EA0;
+static bool renderingPaused = false;
+
+LRESULT CALLBACK MyWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	switch (msg)
+	{
+//	case WM_ACTIVATE: // 6
+//	case WM_CLOSE: // 0x0010
+//	case WM_SYSCOMMAND: // 0x112
+	case WM_KILLFOCUS:
+		// Minimizes the specified window and activates the next top - level window in the Z order.
+		ShowWindow(hWnd, SW_MINIMIZE);
+		break;
+	case WM_ACTIVATEAPP:
+		if (wParam)
+		{
+			renderingPaused = false;
+			OutputDebugStringA("Resumed Render\n");
+		}
+		else
+		{
+			renderingPaused = true;
+			OutputDebugStringA("Paused Render\n");
+		}
+		break;
+	case WM_MOUSEMOVE:
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+	}
+	if (renderingPaused && msg <= 0x2FF)
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+
+	return OrgWndProc(hWnd, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK MyWndProcWindowed(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+/*
+	switch (msg)
+	{
+	case WM_ACTIVATE: // 6
+	case WM_CLOSE: // 0x0010
+	case WM_SYSCOMMAND: // 0x112
+	case WM_KILLFOCUS:
+		// Minimizes the specified window and activates the next top - level window in the Z order.
+		ShowWindow(hWnd, SW_MINIMIZE);
+		break;
+	case WM_ACTIVATEAPP:
+		if (wParam)
+		{
+			renderingPaused = false;
+			OutputDebugStringA("Resumed Render\n");
+		}
+		else
+		{
+			renderingPaused = true;
+			OutputDebugStringA("Paused Render\n");
+		}
+		break;
+	case WM_MOUSEMOVE:
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+	}
+	if (renderingPaused && msg <= 0x2FF)
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+*/
+	return OrgWndProcWindowed(hWnd, msg, wParam, lParam);
+}
 
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,
                        LPVOID lpReserved
-					 )
+                       )
 {
-	void* pOrgFn = (void*)0x004116f0; // func to overwrite
-	ptrdiff_t p = (ptrdiff_t)myhookfoo;
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
 	{
-#if _M_X64
-		// 48 b8 35 08 40 00 00 00 00 00   mov rax, 0x0000000000400835
-		// ff e0                           jmp rax
-		unsigned char codeBytes[12] = { 0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   0xff, 0xe0 };
-		memcpy(&codeBytes[2], &p, sizeof(void*));
-#elif _M_IX86
-		// E9 00000000   jmp rel  displacement relative to next instruction
-		unsigned char codeBytes[5] = { 0xE9, 0x00, 0x00, 0x00, 0x00 };
-		p -= (ptrdiff_t)pOrgFn + sizeof(codeBytes);
-		memcpy(&codeBytes[1], &p, sizeof(void*));
-#else
-#error "The following code only works for x86 and x64!"
-#endif
-
-		SIZE_T bytesWritten = 0;
-		BOOL res = WriteProcessMemory(GetCurrentProcess(),
-			pOrgFn, codeBytes, sizeof(codeBytes), &bytesWritten);
-		assert(res);
-		assert(bytesWritten == sizeof(codeBytes));
+		replaceFn(0x0066C10C, &MyGetVersion);
+		// directly inject into RegisterClass param
+		overWriteMem(0x005AF510 + 4, &MyWndProc);
+		// directly inject into RegisterClassEx param
+		//replaceFn(0x00552530 + 4, &MyWndProcWindowed);
 	}
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
